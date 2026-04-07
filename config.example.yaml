@@ -1,0 +1,74 @@
+# Research MCP Server Configuration
+# Copy to config.yaml and adjust to your setup.
+
+# Feature group toggles — disable groups you don't need
+groups:
+  web_search: true       # SearXNG search + Scrapling scraping + forum search
+  academic: true         # 13 academic source APIs
+  video: true            # YouTube transcript + video metadata
+  github_docs: true      # GitHub search + file reading + package/docs search
+  document: false        # PDF extraction via Docling Serve (requires running Docling)
+  wikipedia: true        # Wikipedia search + article retrieval
+  vector_index: false    # Local vector index (requires running Ollama)
+
+# External service URLs
+services:
+  searxng_url: "http://localhost:8080"       # Your SearXNG instance
+  docling_url: "http://localhost:5001"       # Your Docling Serve instance
+  ollama_url: "http://localhost:11434"       # Your Ollama instance
+  ollama_embed_model: "nomic-embed-text"     # Ollama embedding model
+
+# Transport: "stdio" for OpenCode, "http" for OpenWebUI
+transport: "http"
+host: "127.0.0.1"
+port: 8000
+
+# Scraping configuration
+scraping:
+  default_tier: "basic"       # basic | dynamic | stealth
+  auto_escalate: true         # Try next tier on failure
+  timeout_seconds: 30
+  max_content_length: 50000   # Max chars before pagination
+
+# Academic search defaults
+academic:
+  default_sources:
+    - semantic_scholar
+    - arxiv
+    - crossref
+    - openalex
+  max_results_per_source: 10
+
+# Cache settings (SQLite-based)
+cache:
+  enabled: true
+  db_path: "~/.research-mcp/cache.db"
+  ttl:
+    search_results: 1800       # 30 min
+    web_pages: 3600            # 1 hour
+    academic: 86400            # 24 hours
+    transcripts: 604800        # 7 days
+    embeddings: 2592000        # 30 days
+
+# Vector index settings
+vector_index:
+  db_path: "~/.research-mcp/index.db"
+  embedding_dimensions: 768
+  default_top_k: 10
+
+# Domain filtering for web search results
+domains:
+  blocklist: []    # Domains to exclude (e.g., ["pinterest.com", "quora.com"])
+  allowlist: []    # If non-empty, ONLY these domains are included
+
+# Logging
+log_level: "INFO"
+
+# ─── API Keys (set as environment variables, not here) ───
+# RESEARCH_MCP_GITHUB_PAT=ghp_...
+# RESEARCH_MCP_SEMANTIC_SCHOLAR_API_KEY=...
+# RESEARCH_MCP_CORE_API_KEY=...
+# RESEARCH_MCP_PUBMED_API_KEY=...
+# RESEARCH_MCP_CROSSREF_MAILTO=you@example.com
+# RESEARCH_MCP_UNPAYWALL_EMAIL=you@example.com
+# RESEARCH_MCP_DOAJ_API_KEY=...
