@@ -100,6 +100,8 @@ class AcademicSearchService:
 
         per_source = self._config.academic.max_results_per_source
 
+        failures: dict[str, str] = {}
+
         async def _search_one(source_name: str) -> list[Paper]:
             client = self._clients[source_name]
             try:
@@ -111,12 +113,24 @@ class AcademicSearchService:
                 )
                 logger.info("Source '%s' returned %d papers", source_name, len(papers))
                 return papers
-            except Exception as e:
+            except (APIError, httpx.HTTPError, asyncio.TimeoutError) as e:
                 logger.warning("Source '%s' failed: %s", source_name, e)
+                failures[source_name] = str(e)
+                return []
+            except Exception as e:
+                logger.error("Source '%s' unexpected error: %s", source_name, e, exc_info=True)
+                failures[source_name] = str(e)
                 return []
 
         # Fan out to all sources concurrently
         all_results = await asyncio.gather(*[_search_one(s) for s in searchable])
+
+        # If ALL sources failed, raise an error instead of returning empty
+        if len(failures) == len(searchable) and searchable:
+            raise ServiceError(
+                f"All {len(searchable)} academic sources failed: "
+                + "; ".join(f"{k}: {v}" for k, v in failures.items())
+            )
 
         # Flatten
         all_papers: list[Paper] = []
@@ -126,9 +140,9 @@ class AcademicSearchService:
         # Deduplicate
         deduped = self._deduplicate(all_papers)
 
-        # Filter OA
+        # Filter OA (treat None as unknown, not false)
         if open_access_only:
-            deduped = [p for p in deduped if p.is_open_access]
+            deduped = [p for p in deduped if p.is_open_access is True]
 
         # Sort by citation count (descending), fallback to year
         deduped.sort(key=lambda p: (p.citation_count or 0, p.year or 0), reverse=True)
@@ -203,11 +217,17 @@ class AcademicSearchService:
             try:
                 doc = await document_service.extract_document(pdf_url)
                 return doc.content
-            except Exception as e:
-                logger.warning("Docling extraction failed: %s", e)
+            except (APIError, httpx.HTTPError) as e:
+                logger.warning("Docling extraction failed for %s: %s", pdf_url, e)
+                return (
+                    f"PDF found but Docling extraction failed: {e}\n\n"
+                    f"Title: {paper.title}\n"
+                    f"PDF URL: {pdf_url}\n"
+                    f"DOI: {paper.doi or 'N/A'}"
+                )
 
         return (
-            f"PDF found but text extraction unavailable (Docling Serve not configured).\n\n"
+            f"PDF found but Docling Serve not available for text extraction.\n\n"
             f"Title: {paper.title}\n"
             f"PDF URL: {pdf_url}\n"
             f"DOI: {paper.doi or 'N/A'}"
@@ -222,7 +242,7 @@ class AcademicSearchService:
         if crossref:
             try:
                 paper = await crossref.get_by_doi(doi)
-            except Exception as e:
+            except (APIError, httpx.HTTPError) as e:
                 logger.warning("Crossref DOI resolution failed: %s", e)
 
         # Enrich with Unpaywall OA info
@@ -232,7 +252,7 @@ class AcademicSearchService:
                 if oa_url:
                     paper.pdf_url = oa_url
                     paper.is_open_access = True
-            except Exception as e:
+            except (APIError, httpx.HTTPError) as e:
                 logger.debug("Unpaywall lookup failed: %s", e)
 
         if paper:
@@ -257,8 +277,8 @@ class AcademicSearchService:
                     url = await unpaywall.get_oa_url(doi)
                     if url:
                         return url
-                except Exception:
-                    pass
+                except (APIError, httpx.HTTPError) as e:
+                    logger.debug("Unpaywall OA lookup failed for %s: %s", doi, e)
 
         # 2. Try Europe PMC
         if paper.pmid or doi:
@@ -268,8 +288,8 @@ class AcademicSearchService:
                     url = await europepmc.get_pdf_url(paper.pmid or doi)
                     if url:
                         return url
-                except Exception:
-                    pass
+                except (APIError, httpx.HTTPError) as e:
+                    logger.debug("Europe PMC PDF lookup failed: %s", e)
 
         # 3. Try PMC
         if paper.external_ids.get("pmcid"):
@@ -279,8 +299,8 @@ class AcademicSearchService:
                     url = await pmc.get_pdf_url(paper.external_ids["pmcid"])
                     if url:
                         return url
-                except Exception:
-                    pass
+                except (APIError, httpx.HTTPError) as e:
+                    logger.debug("PMC PDF lookup failed: %s", e)
 
         return None
 
@@ -291,23 +311,27 @@ class AcademicSearchService:
         deduped: list[Paper] = []
 
         for paper in papers:
+            norm_title = _normalize_title(paper.title)
+
             # DOI-based dedup
             if paper.doi:
                 doi_lower = paper.doi.lower()
                 if doi_lower in seen_dois:
-                    existing = seen_dois[doi_lower]
-                    # Merge: keep the one with more info
-                    self._merge_paper(existing, paper)
+                    self._merge_paper(seen_dois[doi_lower], paper)
+                    continue
+                # Also check title index for non-DOI duplicate
+                if norm_title and norm_title in seen_titles:
+                    self._merge_paper(seen_titles[norm_title], paper)
                     continue
                 seen_dois[doi_lower] = paper
+                if norm_title:
+                    seen_titles[norm_title] = paper
                 deduped.append(paper)
                 continue
 
             # Title-based dedup
-            norm_title = _normalize_title(paper.title)
             if norm_title and norm_title in seen_titles:
-                existing = seen_titles[norm_title]
-                self._merge_paper(existing, paper)
+                self._merge_paper(seen_titles[norm_title], paper)
                 continue
 
             if norm_title:

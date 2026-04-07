@@ -73,6 +73,11 @@ class ResearchMCPConfig(BaseSettings):
         env_nested_delimiter="__",
     )
 
+    @classmethod
+    def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
+        # Env vars take priority over init kwargs (YAML values)
+        return env_settings, init_settings, file_secret_settings
+
     groups: GroupsConfig = GroupsConfig()
     services: ServicesConfig = ServicesConfig()
     transport: str = "http"
@@ -134,17 +139,23 @@ def load_config(config_path: str | None = None) -> ResearchMCPConfig:
     """Load config from YAML file + environment variables.
 
     Priority: env vars > YAML file > defaults.
+    Env vars are handled by pydantic-settings automatically at construction.
+    YAML values are passed as init kwargs but env vars take precedence
+    via the _settings_customise_sources override.
     """
     resolved = _resolve_config_path(config_path)
     yaml_data: dict[str, Any] = {}
     if resolved:
-        with open(resolved) as f:
-            yaml_data = yaml.safe_load(f) or {}
+        try:
+            with open(resolved) as f:
+                yaml_data = yaml.safe_load(f) or {}
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in config file {resolved}: {e}") from e
 
-    if yaml_data:
-        config = ResearchMCPConfig(**yaml_data)
-    else:
-        config = ResearchMCPConfig()
+    # pydantic-settings: env vars are read at construction and override init kwargs
+    # by default. We pass YAML data as init kwargs so the priority is:
+    # env vars > YAML kwargs > model defaults
+    config = ResearchMCPConfig(**yaml_data)
 
     # Resolve paths
     config.cache.db_path = str(Path(config.cache.db_path).expanduser())

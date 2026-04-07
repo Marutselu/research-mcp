@@ -81,7 +81,11 @@ class PubMedClient:
         response = await self._client.get(f"{EUTILS_BASE}/efetch.fcgi", params=fetch_params)
         raise_for_status(response, source="pubmed")
 
-        root = ET.fromstring(response.text)
+        try:
+            root = ET.fromstring(response.text)
+        except ET.ParseError as e:
+            from research_mcp.clients.http import APIError
+            raise APIError(f"PubMed returned invalid XML: {e}", source="pubmed")
         papers = []
 
         for article in root.findall(".//PubmedArticle"):

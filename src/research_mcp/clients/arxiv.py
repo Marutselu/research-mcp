@@ -8,12 +8,12 @@ import xml.etree.ElementTree as ET
 
 import httpx
 
-from research_mcp.clients.http import raise_for_status, with_retry
+from research_mcp.clients.http import APIError, raise_for_status, with_retry
 from research_mcp.models.academic import Paper
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "http://export.arxiv.org/api/query"
+BASE_URL = "https://export.arxiv.org/api/query"
 ATOM_NS = "{http://www.w3.org/2005/Atom}"
 ARXIV_NS = "{http://arxiv.org/schemas/atom}"
 
@@ -40,7 +40,10 @@ class ArxivClient:
         response = await self._client.get(BASE_URL, params=params)
         raise_for_status(response, source="arxiv")
 
-        root = ET.fromstring(response.text)
+        try:
+            root = ET.fromstring(response.text)
+        except ET.ParseError as e:
+            raise APIError(f"arXiv returned invalid XML: {e}", source="arxiv")
         papers = []
 
         for entry in root.findall(f"{ATOM_NS}entry"):

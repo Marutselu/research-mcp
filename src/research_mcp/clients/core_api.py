@@ -50,8 +50,14 @@ class CoreClient:
             if self._api_key:
                 logger.warning("CORE API key rejected, retrying without key")
                 self._api_key = None
-                return await self.search(query, max_results, year_min, year_max)
-            raise
+                data = await fetch_json(
+                    self._client,
+                    f"{BASE_URL}/search/works",
+                    source="core",
+                    params=params,
+                )
+            else:
+                raise
 
         papers = []
         for item in data.get("results", []):

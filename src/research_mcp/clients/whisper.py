@@ -45,10 +45,11 @@ class WhisperClient:
             )
         finally:
             import os
+            import shutil
             try:
-                os.unlink(audio_path)
+                shutil.rmtree(os.path.dirname(audio_path), ignore_errors=True)
             except OSError:
-                pass
+                logger.debug("Failed to clean up temp audio directory")
 
         return Transcript(
             video_id=video_id,
@@ -62,12 +63,14 @@ class WhisperClient:
         """Download audio from YouTube via yt-dlp."""
         import yt_dlp
 
-        tmp = tempfile.mktemp(suffix=".mp3")
+        tmpdir = tempfile.mkdtemp(prefix="research_mcp_")
+        import os
+        tmp_base = os.path.join(tmpdir, "audio")
 
         def _download():
             opts = {
                 "format": "bestaudio/best",
-                "outtmpl": tmp.replace(".mp3", ".%(ext)s"),
+                "outtmpl": f"{tmp_base}.%(ext)s",
                 "postprocessors": [
                     {
                         "key": "FFmpegExtractAudio",
@@ -85,10 +88,8 @@ class WhisperClient:
 
         # yt-dlp may change the extension
         import glob
-        import os
 
-        base = tmp.replace(".mp3", "")
-        candidates = glob.glob(f"{base}.*")
+        candidates = glob.glob(f"{tmp_base}.*")
         if candidates:
             return candidates[0]
 

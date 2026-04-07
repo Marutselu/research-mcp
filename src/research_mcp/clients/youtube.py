@@ -43,14 +43,18 @@ class YouTubeClient:
         # Try youtube-transcript-api first
         try:
             return await self._get_via_transcript_api(video_id, language)
-        except Exception as e:
+        except (APIError, ImportError) as e:
             logger.info("youtube-transcript-api failed: %s, trying yt-dlp", e)
+        except Exception as e:
+            logger.warning("youtube-transcript-api unexpected error: %s", e, exc_info=True)
 
         # Try yt-dlp
         try:
             return await self._get_via_ytdlp(video_id, language)
-        except Exception as e:
+        except (APIError, ImportError) as e:
             logger.info("yt-dlp subtitle extraction failed: %s", e)
+        except Exception as e:
+            logger.warning("yt-dlp unexpected error: %s", e, exc_info=True)
 
         raise APIError(
             f"No transcript available for video {video_id}. "
@@ -65,16 +69,18 @@ class YouTubeClient:
         from youtube_transcript_api import YouTubeTranscriptApi
 
         def _fetch():
+            from youtube_transcript_api import NoTranscriptFound
+
             ytt_api = YouTubeTranscriptApi()
             transcript_list = ytt_api.list(video_id)
 
             # Try manual transcripts first, then auto-generated
             try:
                 transcript = transcript_list.find_transcript([language])
-            except Exception:
+            except NoTranscriptFound:
                 try:
                     transcript = transcript_list.find_transcript(["en"])
-                except Exception:
+                except NoTranscriptFound:
                     # Fall back to any available transcript
                     transcript = transcript_list.find_transcript(
                         [t.language_code for t in transcript_list]
@@ -163,6 +169,8 @@ class YouTubeClient:
 
         async with httpx.AsyncClient() as client:
             resp = await client.get(sub_data["url"])
+            if not resp.is_success:
+                raise APIError(f"Failed to fetch subtitles (HTTP {resp.status_code})", source="youtube")
             content = resp.json()
 
         segments = []

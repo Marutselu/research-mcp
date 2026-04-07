@@ -55,8 +55,14 @@ class SemanticScholarClient:
             if self._api_key:
                 logger.warning("S2 API key rejected, retrying without key")
                 self._api_key = None
-                return await self.search(query, max_results, year_min, year_max)
-            raise
+                data = await fetch_json(
+                    self._client,
+                    f"{BASE_URL}/paper/search",
+                    source="semantic_scholar",
+                    params=params,
+                )
+            else:
+                raise
 
         return [_parse_paper(item) for item in data.get("data", [])]
 

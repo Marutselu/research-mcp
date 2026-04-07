@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 
+from urllib.parse import quote
+
 import httpx
 
 from research_mcp.clients.http import fetch_json, with_retry
@@ -31,7 +33,7 @@ class DOAJClient:
         if self._api_key:
             params["api_key"] = self._api_key
 
-        search_url = f"{BASE_URL}/{query}"
+        search_url = f"{BASE_URL}/{quote(query, safe='')}"
 
         data = await fetch_json(
             self._client, search_url, source="doaj", params=params

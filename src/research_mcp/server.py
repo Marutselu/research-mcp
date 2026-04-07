@@ -62,7 +62,7 @@ def compute_disabled_groups(config: ResearchMCPConfig) -> set[str]:
     return disabled
 
 
-def make_lifespan(config: ResearchMCPConfig):
+def make_lifespan(config: ResearchMCPConfig, disabled_groups: set[str]):
     """Create a lifespan context manager factory for FastMCP."""
 
     @asynccontextmanager
@@ -78,8 +78,7 @@ def make_lifespan(config: ResearchMCPConfig):
             "cache": cache_inst,
         }
 
-        # Initialize services based on enabled groups
-        disabled = compute_disabled_groups(config)
+        disabled = disabled_groups
 
         if "web_search" not in disabled:
             from research_mcp.clients.searxng import SearXNGClient
@@ -132,16 +131,19 @@ def make_lifespan(config: ResearchMCPConfig):
             await http_client.aclose()
             cache_inst.close()
             if "vector_index_service" in context:
-                context["vector_index_service"].close()
+                await context["vector_index_service"].close()
 
     return lifespan
 
 
 def create_server(config: ResearchMCPConfig) -> FastMCP:
     """Create the FastMCP server with all tool groups registered."""
+    # Compute disabled groups once and cache
+    disabled = compute_disabled_groups(config)
+
     mcp = FastMCP(
         "research-mcp",
-        lifespan=make_lifespan(config),
+        lifespan=make_lifespan(config, disabled),
     )
 
     # Register all tools (each tagged with their group)
@@ -149,8 +151,7 @@ def create_server(config: ResearchMCPConfig) -> FastMCP:
 
     register_all_tools(mcp)
 
-    # Disable groups that are turned off in config or missing deps
-    disabled = compute_disabled_groups(config)
+    # Disable groups
     for group in disabled:
         mcp.disable(tags={group})
 

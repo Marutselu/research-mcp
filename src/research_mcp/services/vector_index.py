@@ -26,8 +26,9 @@ def _serialize_vector(vec: list[float]) -> bytes:
 class VectorIndexService:
     def __init__(self, config: ResearchMCPConfig) -> None:
         self._config = config
+        self._ollama_http = create_http_client(timeout=60.0)
         self._ollama = OllamaClient(
-            create_http_client(timeout=60.0),
+            self._ollama_http,
             config.services.ollama_url,
             config.services.ollama_embed_model,
         )
@@ -77,7 +78,8 @@ class VectorIndexService:
         self._conn.commit()
         logger.info("Vector index initialized at %s", db_path)
 
-    def close(self) -> None:
+    async def close(self) -> None:
+        await self._ollama_http.aclose()
         if self._conn:
             self._conn.close()
             self._conn = None
