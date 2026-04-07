@@ -25,31 +25,28 @@ class DoclingClient:
     ) -> ExtractedDocument:
         """Send a document to Docling Serve for extraction."""
         try:
-            # Determine if it's a URL or file path
             if url_or_path.startswith(("http://", "https://")):
                 response = await self._client.post(
                     f"{self._base_url}/v1alpha/convert/source",
                     json={
-                        "http_source": {"url": url_or_path},
+                        "http_sources": [{"url": url_or_path}],
                         "options": {
-                            "to_markdown": True,
-                            "include_images": extract_images,
+                            "to_formats": ["md"],
                         },
                     },
                     timeout=120.0,
                 )
             else:
-                # File upload
                 with open(url_or_path, "rb") as f:
                     response = await self._client.post(
                         f"{self._base_url}/v1alpha/convert/file",
                         files={"file": (url_or_path.split("/")[-1], f)},
+                        data={"options": '{"to_formats": ["md"]}'},
                         timeout=120.0,
                     )
 
             raise_for_status(response, source="docling")
             data = response.json()
-
             return self._parse_response(data, url_or_path)
 
         except httpx.ConnectError:
@@ -60,11 +57,15 @@ class DoclingClient:
 
     def _parse_response(self, data: dict, source_url: str) -> ExtractedDocument:
         """Parse Docling Serve response into ExtractedDocument."""
-        # Docling returns markdown content directly
-        content = data.get("markdown", data.get("content", ""))
+        # Docling v1alpha nests content under "document"
+        document = data.get("document", data)
+        content = document.get("md_content", document.get("markdown", document.get("content", "")))
+
+        if not content:
+            logger.warning("Docling returned empty content for %s. Response keys: %s", source_url, list(data.keys()))
 
         tables = []
-        for table_data in data.get("tables", []):
+        for table_data in document.get("tables", data.get("tables", [])):
             tables.append(
                 ExtractedTable(
                     caption=table_data.get("caption"),
@@ -74,13 +75,13 @@ class DoclingClient:
                 )
             )
 
-        figures = [fig.get("caption", "") for fig in data.get("figures", [])]
+        figures = [fig.get("caption", "") for fig in document.get("figures", data.get("figures", []))]
 
         return ExtractedDocument(
             content=content,
             tables=tables,
             figures=figures,
-            title=data.get("title"),
-            num_pages=data.get("num_pages"),
+            title=document.get("title", data.get("title")),
+            num_pages=document.get("num_pages", data.get("num_pages")),
             source_url=source_url,
         )

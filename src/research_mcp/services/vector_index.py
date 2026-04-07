@@ -92,28 +92,52 @@ class VectorIndexService:
         source_type: str = "webpage",
         tags: list[str] | None = None,
     ) -> str:
-        """Embed and store content in the vector index."""
+        """Embed and store content in the vector index with chunked embeddings."""
         entry_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
 
-        # Compute embedding for the content (truncate to ~2000 chars for embedding)
-        embed_text = f"{title}\n\n{content[:2000]}"
-        embedding = await self._ollama.embed(embed_text)
+        # Chunk content for better retrieval (overlapping ~500 char chunks)
+        chunks = self._chunk_text(f"{title}\n\n{content}", chunk_size=500, overlap=100)
 
-        # Store metadata
+        # Compute embeddings for all chunks
+        if len(chunks) == 1:
+            embeddings = [await self._ollama.embed(chunks[0])]
+        else:
+            embeddings = await self._ollama.embed_batch(chunks)
+
+        # Store metadata (full content preserved)
         self._conn.execute(
             "INSERT INTO entries (id, title, url, source_type, tags, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (entry_id, title, url, source_type, json.dumps(tags or []), content, now),
         )
 
-        # Store embedding
-        self._conn.execute(
-            "INSERT INTO vec_entries (entry_id, embedding) VALUES (?, ?)",
-            (entry_id, _serialize_vector(embedding)),
-        )
+        # Store one embedding per chunk, all linked to the same entry_id
+        for embedding in embeddings:
+            self._conn.execute(
+                "INSERT INTO vec_entries (entry_id, embedding) VALUES (?, ?)",
+                (entry_id, _serialize_vector(embedding)),
+            )
 
         self._conn.commit()
+        logger.info("Saved entry %s with %d chunks", entry_id, len(chunks))
         return entry_id
+
+    @staticmethod
+    def _chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> list[str]:
+        """Split text into overlapping chunks for embedding."""
+        if len(text) <= chunk_size:
+            return [text]
+
+        chunks = []
+        start = 0
+        while start < len(text):
+            end = start + chunk_size
+            chunk = text[start:end]
+            if chunk.strip():
+                chunks.append(chunk.strip())
+            start += chunk_size - overlap
+
+        return chunks if chunks else [text[:chunk_size]]
 
     async def search(
         self,
@@ -131,8 +155,8 @@ class VectorIndexService:
             SELECT entry_id, distance
             FROM vec_entries
             WHERE embedding MATCH ?
+            AND k = ?
             ORDER BY distance
-            LIMIT ?
             """,
             (_serialize_vector(query_embedding), top_k * 3),  # Over-fetch for filtering
         ).fetchall()

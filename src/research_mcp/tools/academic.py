@@ -135,50 +135,20 @@ def register_academic_tools(mcp: FastMCP) -> None:
         return papers
 
     @mcp.tool(tags={"academic"})
-    async def research_resolve_doi(
-        doi: str,
-        bypass_cache: bool = False,
-        ctx: Context = None,
-    ) -> Paper:
-        """Resolve a DOI to full paper metadata and open access PDF URL.
-
-        Uses Crossref for metadata and Unpaywall for OA PDF discovery.
-
-        Args:
-            doi: The DOI to resolve (e.g., '10.1038/s41586-021-03819-2').
-            bypass_cache: Skip cache.
-        """
-        cache: Cache = ctx.lifespan_context["cache"]
-        service: AcademicSearchService = ctx.lifespan_context["academic_service"]
-        config = ctx.lifespan_context["config"]
-
-        cache_key = cache.make_key("research_resolve_doi", {"doi": doi})
-
-        if not bypass_cache:
-            cached = cache.get(cache_key)
-            if cached:
-                return Paper(**cached)
-
-        paper = await service.resolve_doi(doi)
-        cache.set(cache_key, paper.model_dump(), ttl_seconds=config.cache.ttl.academic, source="resolve_doi")
-        return paper
-
-    @mcp.tool(tags={"academic"})
     async def research_download_paper(
         paper_id_or_doi: str,
-        output_format: str = "markdown",
         start_index: int = 0,
         max_length: int = 20000,
         ctx: Context = None,
     ) -> str:
-        """Download and extract the full text of an academic paper.
+        """Download and extract the full text of an academic paper as markdown.
 
-        Tries multiple sources to find an open access PDF, then extracts text via Docling Serve.
-        If Docling is unavailable, returns the best OA PDF URL found.
+        Tries multiple sources to find an open access PDF, then extracts text.
+        Uses fast PyMuPDF extraction, falling back to Docling Serve for scanned PDFs.
+        Returns the PDF URL if extraction is unavailable or the paper is not open access.
 
         Args:
-            paper_id_or_doi: Paper identifier or DOI.
-            output_format: Output format - 'markdown' or 'text'.
+            paper_id_or_doi: Paper identifier — DOI (10.xxx/yyy), arXiv ID (2301.12345), S2 ID, PMID, or PMCID.
             start_index: Character offset for pagination.
             max_length: Maximum characters to return.
         """
@@ -187,7 +157,6 @@ def register_academic_tools(mcp: FastMCP) -> None:
 
         result = await service.download_paper(
             paper_id_or_doi,
-            output_format=output_format,
             document_service=document_service,
         )
 

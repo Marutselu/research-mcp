@@ -66,39 +66,31 @@ def register_github_docs_tools(mcp: FastMCP) -> None:
         return await service.read_github_file(owner, repo, path=path, ref=ref)
 
     @mcp.tool(tags={"github_docs"})
-    async def research_package_docs(
-        package_name: str,
-        registry: str = "pypi",
-        query: str | None = None,
-        max_results: int = 5,
-        ctx: Context = None,
-    ) -> SearchResponse:
-        """Search documentation for a Python or npm package.
-
-        Finds and scrapes relevant doc pages via SearXNG site-restricted search.
-
-        Args:
-            package_name: Package name (e.g., 'fastapi', 'react').
-            registry: Package registry - 'pypi' or 'npm'.
-            query: Optional specific query within the docs.
-            max_results: Maximum results.
-        """
-        service: GitHubDocsService = ctx.lifespan_context["github_docs_service"]
-        return await service.search_package_docs(package_name, registry=registry, query=query, max_results=max_results)
-
-    @mcp.tool(tags={"github_docs"})
     async def research_docs_search(
         query: str,
         site: str | None = None,
+        package: str | None = None,
+        registry: str | None = None,
         max_results: int = 10,
         ctx: Context = None,
     ) -> SearchResponse:
-        """Search official documentation sites.
+        """Search documentation sites, package docs, or official API references.
+
+        For general docs: just provide a query (and optionally a site domain to restrict to).
+        For package docs: provide the package name and registry (pypi/npm) to auto-search ReadTheDocs, PyPI, npmjs, etc.
 
         Args:
             query: Search query.
             site: Optional domain to restrict search to (e.g., 'docs.python.org', 'react.dev').
+            package: Optional package name for package-specific doc search (e.g., 'fastapi', 'react').
+            registry: Package registry when using package search - 'pypi' or 'npm'.
             max_results: Maximum results.
         """
         service: GitHubDocsService = ctx.lifespan_context["github_docs_service"]
+
+        if package:
+            return await service.search_package_docs(
+                package, registry=registry or "pypi", query=query, max_results=max_results
+            )
+
         return await service.search_docs(query, site=site, max_results=max_results)

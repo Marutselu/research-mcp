@@ -101,19 +101,27 @@ class AcademicSearchService:
         per_source = self._config.academic.max_results_per_source
 
         failures: dict[str, str] = {}
+        per_source_timeout = 20.0  # Hard cap per source, including retries
 
         async def _search_one(source_name: str) -> list[Paper]:
             client = self._clients[source_name]
             try:
-                papers = await client.search(
-                    query=query,
-                    max_results=per_source,
-                    year_min=year_min,
-                    year_max=year_max,
+                papers = await asyncio.wait_for(
+                    client.search(
+                        query=query,
+                        max_results=per_source,
+                        year_min=year_min,
+                        year_max=year_max,
+                    ),
+                    timeout=per_source_timeout,
                 )
                 logger.info("Source '%s' returned %d papers", source_name, len(papers))
                 return papers
-            except (APIError, httpx.HTTPError, asyncio.TimeoutError) as e:
+            except asyncio.TimeoutError:
+                logger.warning("Source '%s' timed out after %.0fs", source_name, per_source_timeout)
+                failures[source_name] = f"timed out after {per_source_timeout}s"
+                return []
+            except (APIError, httpx.HTTPError) as e:
                 logger.warning("Source '%s' failed: %s", source_name, e)
                 failures[source_name] = str(e)
                 return []
@@ -159,9 +167,9 @@ class AcademicSearchService:
         elif id_type == "arxiv":
             client = self._clients.get("arxiv")
             if client:
-                papers = await client.search(query=f"id:{paper_id}", max_results=1)
-                if papers:
-                    return papers[0]
+                paper = await client.get_by_id(paper_id)
+                if paper:
+                    return paper
         elif id_type == "pmid":
             client = self._clients.get("pubmed")
             if client:
@@ -197,7 +205,6 @@ class AcademicSearchService:
     async def download_paper(
         self,
         paper_id_or_doi: str,
-        output_format: str = "markdown",
         document_service: Any = None,
     ) -> str:
         """Find an OA PDF and extract text. Returns URL if extraction unavailable."""

@@ -45,7 +45,6 @@ class ArxivClient:
         except ET.ParseError as e:
             raise APIError(f"arXiv returned invalid XML: {e}", source="arxiv")
         papers = []
-
         for entry in root.findall(f"{ATOM_NS}entry"):
             paper = _parse_entry(entry)
             if paper:
@@ -56,6 +55,24 @@ class ArxivClient:
                 papers.append(paper)
 
         return papers
+
+    @with_retry(max_attempts=3)
+    async def get_by_id(self, arxiv_id: str) -> Paper | None:
+        """Look up a specific paper by arXiv ID using id_list parameter."""
+        params = {"id_list": arxiv_id, "max_results": 1}
+        response = await self._client.get(BASE_URL, params=params)
+        raise_for_status(response, source="arxiv")
+
+        try:
+            root = ET.fromstring(response.text)
+        except ET.ParseError as e:
+            raise APIError(f"arXiv returned invalid XML: {e}", source="arxiv")
+
+        for entry in root.findall(f"{ATOM_NS}entry"):
+            paper = _parse_entry(entry)
+            if paper:
+                return paper
+        return None
 
 
 def _parse_entry(entry: ET.Element) -> Paper | None:

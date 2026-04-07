@@ -117,23 +117,6 @@ def _resolve_config_path(cli_path: str | None = None) -> Path | None:
     return None
 
 
-def _yaml_to_flat_env(data: dict[str, Any], prefix: str = "RESEARCH_MCP_") -> dict[str, str]:
-    """Flatten nested YAML dict into env-var-style keys for Pydantic Settings."""
-    result: dict[str, str] = {}
-
-    def _flatten(obj: Any, key_prefix: str) -> None:
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                _flatten(v, f"{key_prefix}{k.upper()}__" if key_prefix else f"{prefix}{k.upper()}__")
-            return
-        if isinstance(obj, list):
-            result[key_prefix.rstrip("__")] = str(obj)
-            return
-        result[key_prefix.rstrip("__")] = str(obj)
-
-    _flatten(data, "")
-    return result
-
 
 def load_config(config_path: str | None = None) -> ResearchMCPConfig:
     """Load config from YAML file + environment variables.
