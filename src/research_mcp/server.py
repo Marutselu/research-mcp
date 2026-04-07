@@ -86,12 +86,15 @@ def make_lifespan(config: ResearchMCPConfig, disabled_groups: set[str]):
             from research_mcp.services.scraper import ScraperService
             from research_mcp.services.web_search import WebSearchService
 
+            from research_mcp.services.forums import ForumSearchService
+
             searxng_client = SearXNGClient(http_client, config.services.searxng_url)
             scrapling_client = ScraplingClient(config.scraping)
             context["searxng_client"] = searxng_client
             context["scrapling_client"] = scrapling_client
             context["web_search_service"] = WebSearchService(searxng_client, config.domains)
             context["scraper_service"] = ScraperService(scrapling_client, config.scraping)
+            context["forum_service"] = ForumSearchService(http_client, config)
 
         if "academic" not in disabled:
             from research_mcp.services.academic_search import AcademicSearchService
