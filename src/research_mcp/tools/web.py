@@ -107,13 +107,14 @@ def register_web_tools(mcp: FastMCP) -> None:
         bypass_cache: bool = False,
         ctx: Context = None,
     ) -> SearchResponse:
-        """Search forum discussions on Reddit, StackOverflow, StackExchange, or HackerNews.
+        """Search forum discussions on Reddit, StackOverflow, StackExchange, HackerNews, or any site.
 
         Uses SearXNG with site-restricted queries for targeted forum search.
+        The 'stackexchange' option covers all SE network sites (superuser, serverfault, askubuntu, mathoverflow, etc.).
 
         Args:
             query: Search query string.
-            site: Forum to search - 'reddit', 'stackoverflow', 'stackexchange', or 'hackernews'.
+            site: Forum to search - 'reddit', 'stackoverflow', 'stackexchange', 'hackernews', or any domain (e.g. 'discourse.example.com').
             max_results: Maximum number of results.
             bypass_cache: Skip cache.
         """
@@ -121,14 +122,17 @@ def register_web_tools(mcp: FastMCP) -> None:
         service: WebSearchService = ctx.lifespan_context["web_search_service"]
         config = ctx.lifespan_context["config"]
 
-        site_domains = {
-            "reddit": "reddit.com",
-            "stackoverflow": "stackoverflow.com",
-            "stackexchange": "stackexchange.com",
-            "hackernews": "news.ycombinator.com",
+        site_queries = {
+            "reddit": "site:reddit.com",
+            "stackoverflow": "site:stackoverflow.com",
+            "stackexchange": (
+                "site:stackexchange.com OR site:superuser.com OR site:serverfault.com "
+                "OR site:askubuntu.com OR site:mathoverflow.net"
+            ),
+            "hackernews": "site:news.ycombinator.com",
         }
-        domain = site_domains.get(site, site)
-        site_query = f"site:{domain} {query}"
+        site_prefix = site_queries.get(site, f"site:{site}")
+        site_query = f"{site_prefix} {query}"
 
         cache_key = cache.make_key("research_forum_search", {
             "query": query, "site": site, "max_results": max_results,
