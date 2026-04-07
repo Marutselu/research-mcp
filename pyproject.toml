@@ -31,11 +31,14 @@ video = [
 whisper = [
     "faster-whisper>=1.0",
 ]
+pdf = [
+    "pymupdf4llm>=0.0.17",
+]
 index = [
     "sqlite-vec>=0.1",
 ]
 all = [
-    "research-mcp[web,video,index]",
+    "research-mcp[web,video,pdf,index]",
 ]
 dev = [
     "pytest>=8.0",

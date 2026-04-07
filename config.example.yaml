@@ -7,7 +7,7 @@ groups:
   academic: true         # 13 academic source APIs
   video: true            # YouTube transcript + video metadata
   github_docs: true      # GitHub search + file reading + package/docs search
-  document: false        # PDF extraction via Docling Serve (requires running Docling)
+  document: true         # PDF extraction: pymupdf4llm (fast) → Docling Serve (fallback for scanned PDFs)
   wikipedia: true        # Wikipedia search + article retrieval
   vector_index: false    # Local vector index (requires running Ollama)
 
