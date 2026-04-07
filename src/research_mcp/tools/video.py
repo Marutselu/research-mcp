@@ -16,7 +16,7 @@ def register_video_tools(mcp: FastMCP) -> None:
     async def research_youtube_transcript(
         video_url_or_id: str,
         language: str = "en",
-        include_timestamps: bool = True,
+        include_timestamps: bool = False,
         start_index: int = 0,
         max_length: int = 20000,
         bypass_cache: bool = False,
@@ -25,11 +25,12 @@ def register_video_tools(mcp: FastMCP) -> None:
         """Extract transcript from a YouTube video.
 
         Fallback chain: YouTube transcript API -> yt-dlp subtitles -> faster-whisper audio transcription.
+        Auto-caption noise ([Music], [Applause], etc.) is stripped. Output is cleaned of excessive whitespace.
 
         Args:
             video_url_or_id: YouTube URL (youtube.com/watch?v=..., youtu.be/..., shorts/...) or video ID.
             language: Preferred transcript language code (e.g., 'en', 'ja').
-            include_timestamps: Include timestamps in the output.
+            include_timestamps: Include sparse timestamps (every 30s) in the output. Default false to save tokens.
             start_index: Character offset for pagination.
             max_length: Maximum characters to return.
             bypass_cache: Skip cache.
