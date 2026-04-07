@@ -114,24 +114,92 @@ def register_web_tools(mcp: FastMCP) -> None:
     async def research_forum_search(
         query: str,
         site: str,
-        max_results: int = 5,
-        include_content: bool = True,
+        max_results: int = 10,
+        bypass_cache: bool = False,
+        ctx: Context = None,
+    ) -> SearchResponse:
+        """Search forum discussions and return a list of threads with metadata for evaluation.
+
+        Returns titles, scores, answer counts, tags, and short previews — NOT full content.
+        Use research_forum_thread to read the full content of specific threads you choose.
+
+        Uses StackExchange API for SO/SE (structured metadata with vote scores),
+        Algolia API for HackerNews, SearXNG for Reddit and other forums.
+
+        Args:
+            query: Search query string.
+            site: Forum to search — 'stackoverflow', 'stackexchange' (all SE sites), 'reddit', 'hackernews', or any domain.
+            max_results: Maximum threads to list.
+            bypass_cache: Skip cache.
+        """
+        cache: Cache = ctx.lifespan_context["cache"]
+        config = ctx.lifespan_context["config"]
+        forum_service = ctx.lifespan_context["forum_service"]
+
+        cache_key = cache.make_key("research_forum_search", {
+            "query": query, "site": site, "max_results": max_results,
+        })
+
+        if not bypass_cache:
+            cached = cache.get(cache_key)
+            if cached:
+                return SearchResponse(**cached)
+
+        threads = await forum_service.search_forum(
+            query=query, site=site, max_results=max_results, include_content=False,
+        )
+
+        results = []
+        for thread in threads:
+            metadata: dict[str, Any] = {}
+            if "score" in thread:
+                metadata["score"] = thread["score"]
+            if "answer_count" in thread:
+                metadata["answer_count"] = thread["answer_count"]
+            if "is_answered" in thread:
+                metadata["is_answered"] = thread["is_answered"]
+            if "tags" in thread:
+                metadata["tags"] = thread["tags"]
+            if "points" in thread:
+                metadata["points"] = thread["points"]
+            if "num_comments" in thread:
+                metadata["num_comments"] = thread["num_comments"]
+            if "question_id" in thread:
+                metadata["question_id"] = thread["question_id"]
+
+            results.append(NormalizedResult(
+                title=thread.get("title", ""),
+                url=thread.get("url", ""),
+                snippet=thread.get("snippet", thread.get("question_body", ""))[:300],
+                source=thread.get("source", site),
+                content_type="forum_thread",
+                metadata=metadata,
+            ))
+
+        response = SearchResponse(results=results, total=len(results), query=query)
+        cache.set(cache_key, response.model_dump(), ttl_seconds=config.cache.ttl.search_results, source="forum_search")
+        return response
+
+    @mcp.tool(tags={"web_search"})
+    async def research_forum_thread(
+        url: str,
+        site: str | None = None,
+        question_id: int | None = None,
         start_index: int = 0,
         max_length: int = 20000,
         bypass_cache: bool = False,
         ctx: Context = None,
     ) -> PaginatedContent:
-        """Search forum discussions and retrieve full thread content (questions, answers, comments).
+        """Read the full content of a specific forum thread (question + answers/comments).
 
-        Uses structured APIs for StackOverflow/StackExchange (with vote scores and accepted answers)
-        and HackerNews (via Algolia). For Reddit and other forums, searches via SearXNG and scrapes
-        full thread content.
+        Use after research_forum_search to read threads you've chosen.
+        For StackOverflow/SE, pass the question_id for structured API access.
+        For other sites, pass the URL to scrape.
 
         Args:
-            query: Search query string.
-            site: Forum to search — 'stackoverflow', 'stackexchange' (all SE sites), 'reddit', 'hackernews', or any domain.
-            max_results: Maximum threads to retrieve (default 5, since full content is fetched).
-            include_content: Fetch full thread content (questions + answers/comments). Set false for links only.
+            url: Thread URL (from research_forum_search results).
+            site: Forum site hint — 'stackoverflow', 'hackernews', 'reddit', etc. Auto-detected from URL if omitted.
+            question_id: StackExchange question ID (from search metadata) for structured API access.
             start_index: Character offset for pagination.
             max_length: Maximum characters to return.
             bypass_cache: Skip cache.
@@ -140,8 +208,8 @@ def register_web_tools(mcp: FastMCP) -> None:
         config = ctx.lifespan_context["config"]
         forum_service = ctx.lifespan_context["forum_service"]
 
-        cache_key = cache.make_key("research_forum_search", {
-            "query": query, "site": site, "max_results": max_results, "include_content": include_content,
+        cache_key = cache.make_key("research_forum_thread", {
+            "url": url, "site": site, "question_id": question_id,
         })
 
         if not bypass_cache:
@@ -149,18 +217,12 @@ def register_web_tools(mcp: FastMCP) -> None:
             if cached:
                 return _paginate(cached["content"], start_index, max_length)
 
-        threads = await forum_service.search_forum(
-            query=query,
-            site=site,
-            max_results=max_results,
-            include_content=include_content,
+        content = await forum_service.get_thread_content(
+            url=url, site=site, question_id=question_id,
         )
 
-        # Format threads into readable markdown
-        full_text = _format_threads(threads, site)
-
-        cache.set(cache_key, {"content": full_text}, ttl_seconds=config.cache.ttl.web_pages, source="forum_search")
-        return _paginate(full_text, start_index, max_length)
+        cache.set(cache_key, {"content": content}, ttl_seconds=config.cache.ttl.web_pages, source="forum_thread")
+        return _paginate(content, start_index, max_length)
 
 
 def _paginate(content: str, start_index: int, max_length: int) -> PaginatedContent:
@@ -176,50 +238,3 @@ def _paginate(content: str, start_index: int, max_length: int) -> PaginatedConte
     )
 
 
-def _format_threads(threads: list[dict[str, Any]], site: str) -> str:
-    """Format forum threads into readable markdown."""
-    parts = []
-
-    for i, thread in enumerate(threads, 1):
-        title = thread.get("title", "Untitled")
-        url = thread.get("url", "")
-        source = thread.get("source", site)
-
-        parts.append(f"## {i}. {title}")
-        parts.append(f"**Source:** {source} | **URL:** {url}")
-
-        # StackExchange format
-        if "question_body" in thread:
-            score = thread.get("score", 0)
-            tags = ", ".join(thread.get("tags", []))
-            parts.append(f"**Score:** {score} | **Tags:** {tags}")
-            parts.append(f"\n### Question\n{thread['question_body']}")
-
-            for j, answer in enumerate(thread.get("answers", []), 1):
-                accepted = " (Accepted)" if answer.get("is_accepted") else ""
-                parts.append(f"\n### Answer {j}{accepted} (Score: {answer.get('score', 0)})")
-                parts.append(answer.get("body", ""))
-
-        # HackerNews format
-        elif "comments" in thread:
-            points = thread.get("points", 0)
-            parts.append(f"**Points:** {points} | **Comments:** {thread.get('num_comments', 0)}")
-            if thread.get("external_url"):
-                parts.append(f"**Link:** {thread['external_url']}")
-            if thread.get("body"):
-                parts.append(f"\n{thread['body']}")
-
-            for comment in thread.get("comments", []):
-                indent = "  " * comment.get("depth", 0)
-                author = comment.get("author", "anon")
-                parts.append(f"\n{indent}**{author}:** {comment.get('text', '')}")
-
-        # Reddit / generic scraped format
-        elif "content" in thread:
-            parts.append(f"\n{thread['content']}")
-        elif "snippet" in thread:
-            parts.append(f"\n{thread['snippet']}")
-
-        parts.append("\n---\n")
-
-    return "\n".join(parts)
