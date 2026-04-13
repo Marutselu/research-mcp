@@ -16,6 +16,7 @@ import httpx
 
 from research_mcp.clients.hackernews import HackerNewsClient
 from research_mcp.clients.http import APIError
+from research_mcp.clients.searxng import SearXNGClient
 from research_mcp.clients.stackexchange import StackExchangeClient
 from research_mcp.config import ResearchMCPConfig
 
@@ -23,11 +24,17 @@ logger = logging.getLogger(__name__)
 
 
 class ForumSearchService:
-    def __init__(self, http_client: httpx.AsyncClient, config: ResearchMCPConfig) -> None:
+    def __init__(
+        self,
+        http_client: httpx.AsyncClient,
+        config: ResearchMCPConfig,
+        searxng_client: SearXNGClient | None = None,
+    ) -> None:
         self._http = http_client
         self._config = config
         self._stackexchange = StackExchangeClient(http_client)
         self._hackernews = HackerNewsClient(http_client)
+        self._searxng = searxng_client
 
     # --- Step 1: Search (metadata only, fast) ---
 
@@ -39,9 +46,19 @@ class ForumSearchService:
         include_content: bool = False,
     ) -> list[dict[str, Any]]:
         """Search a forum and return thread metadata for LLM evaluation."""
-        if site in ("stackoverflow", "superuser", "serverfault", "askubuntu",
-                     "mathoverflow", "unix", "tex", "dba", "softwareengineering",
-                     "codereview", "stackexchange"):
+        if site in (
+            "stackoverflow",
+            "superuser",
+            "serverfault",
+            "askubuntu",
+            "mathoverflow",
+            "unix",
+            "tex",
+            "dba",
+            "softwareengineering",
+            "codereview",
+            "stackexchange",
+        ):
             return await self._search_stackexchange(query, site, max_results)
         elif site == "hackernews":
             return await self._search_hackernews(query, max_results)
@@ -63,8 +80,17 @@ class ForumSearchService:
         if not site:
             site = self._detect_site(url)
 
-        if site and "stackexchange" in site or site in (
-            "stackoverflow", "superuser", "serverfault", "askubuntu", "mathoverflow",
+        if (
+            site
+            and "stackexchange" in site
+            or site
+            in (
+                "stackoverflow",
+                "superuser",
+                "serverfault",
+                "askubuntu",
+                "mathoverflow",
+            )
         ):
             return await self._read_stackexchange_thread(url, site, question_id)
         elif site == "hackernews":
@@ -77,28 +103,36 @@ class ForumSearchService:
     # --- SE search + read ---
 
     async def _search_stackexchange(
-        self, query: str, site: str, max_results: int,
+        self,
+        query: str,
+        site: str,
+        max_results: int,
     ) -> list[dict[str, Any]]:
         se_site = "stackoverflow" if site == "stackexchange" else site
         questions = await self._stackexchange.search(query, site=se_site, max_results=max_results)
 
         results = []
         for q in questions:
-            results.append({
-                "title": q["title"],
-                "url": q["url"],
-                "source": f"stackexchange:{q['site']}",
-                "snippet": q["body"][:300] if q.get("body") else "",
-                "score": q["score"],
-                "tags": q["tags"],
-                "answer_count": q["answer_count"],
-                "is_answered": q["is_answered"],
-                "question_id": q["question_id"],
-            })
+            results.append(
+                {
+                    "title": q["title"],
+                    "url": q["url"],
+                    "source": f"stackexchange:{q['site']}",
+                    "snippet": q["body"][:300] if q.get("body") else "",
+                    "score": q["score"],
+                    "tags": q["tags"],
+                    "answer_count": q["answer_count"],
+                    "is_answered": q["is_answered"],
+                    "question_id": q["question_id"],
+                }
+            )
         return results
 
     async def _read_stackexchange_thread(
-        self, url: str, site: str, question_id: int | None,
+        self,
+        url: str,
+        site: str,
+        question_id: int | None,
     ) -> str:
         """Read full SE question + top answers via API."""
         se_site = site.split(":")[-1] if ":" in site else site
@@ -141,15 +175,17 @@ class ForumSearchService:
 
         results = []
         for story in stories:
-            results.append({
-                "title": story["title"],
-                "url": story["hn_url"],
-                "external_url": story.get("url"),
-                "source": "hackernews",
-                "snippet": story.get("story_text", "")[:300],
-                "points": story["points"],
-                "num_comments": story["num_comments"],
-            })
+            results.append(
+                {
+                    "title": story["title"],
+                    "url": story["hn_url"],
+                    "external_url": story.get("url"),
+                    "source": "hackernews",
+                    "snippet": story.get("story_text", "")[:300],
+                    "points": story["points"],
+                    "num_comments": story["num_comments"],
+                }
+            )
         return results
 
     async def _read_hackernews_thread(self, url: str) -> str:
@@ -176,19 +212,18 @@ class ForumSearchService:
     # --- Reddit search + read ---
 
     async def _search_reddit(self, query: str, max_results: int) -> list[dict[str, Any]]:
-        from research_mcp.clients.searxng import SearXNGClient
-
-        searxng = SearXNGClient(self._http, self._config.services.searxng_url)
-        raw = await searxng.search(query=f"site:reddit.com {query}", categories=["general"])
+        raw = await self._searxng.search(query=f"site:reddit.com {query}", categories=["general"])
 
         results = []
         for item in raw.get("results", [])[:max_results]:
-            results.append({
-                "title": item.get("title", ""),
-                "url": item.get("url", ""),
-                "source": "reddit",
-                "snippet": item.get("content", ""),
-            })
+            results.append(
+                {
+                    "title": item.get("title", ""),
+                    "url": item.get("url", ""),
+                    "source": "reddit",
+                    "snippet": item.get("content", ""),
+                }
+            )
         return results
 
     async def _read_reddit_thread(self, url: str) -> str:
@@ -215,19 +250,18 @@ class ForumSearchService:
     # --- Generic search + read ---
 
     async def _search_generic(self, query: str, site: str, max_results: int) -> list[dict[str, Any]]:
-        from research_mcp.clients.searxng import SearXNGClient
-
-        searxng = SearXNGClient(self._http, self._config.services.searxng_url)
-        raw = await searxng.search(query=f"site:{site} {query}", categories=["general"])
+        raw = await self._searxng.search(query=f"site:{site} {query}", categories=["general"])
 
         results = []
         for item in raw.get("results", [])[:max_results]:
-            results.append({
-                "title": item.get("title", ""),
-                "url": item.get("url", ""),
-                "source": site,
-                "snippet": item.get("content", ""),
-            })
+            results.append(
+                {
+                    "title": item.get("title", ""),
+                    "url": item.get("url", ""),
+                    "source": site,
+                    "snippet": item.get("content", ""),
+                }
+            )
         return results
 
     async def _read_generic_thread(self, url: str) -> str:

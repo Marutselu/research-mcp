@@ -40,9 +40,7 @@ class Cache:
                 )
                 """
             )
-            self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_cache_expiry ON cache(created_at, ttl_seconds)"
-            )
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_cache_expiry ON cache(created_at, ttl_seconds)")
             self._conn.commit()
             self._evict_expired()
         except sqlite3.Error as e:
@@ -56,7 +54,16 @@ class Cache:
 
     @staticmethod
     def make_key(tool_name: str, params: dict[str, Any]) -> str:
-        sorted_params = json.dumps(params, sort_keys=True, default=str)
+        """Generate a cache key with normalized query values."""
+        normalized = {}
+        for k, v in params.items():
+            if isinstance(v, str):
+                normalized[k] = " ".join(v.lower().split())
+            elif isinstance(v, list) and v and isinstance(v[0], str):
+                normalized[k] = [" ".join(s.lower().split()) for s in v]
+            else:
+                normalized[k] = v
+        sorted_params = json.dumps(normalized, sort_keys=True, default=str)
         raw = f"{tool_name}:{sorted_params}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
@@ -109,9 +116,7 @@ class Cache:
             return
         try:
             now = time.time()
-            self._conn.execute(
-                "DELETE FROM cache WHERE (created_at + ttl_seconds) < ?", (now,)
-            )
+            self._conn.execute("DELETE FROM cache WHERE (created_at + ttl_seconds) < ?", (now,))
             self._conn.commit()
         except sqlite3.Error as e:
             logger.warning("Cache eviction error: %s", e)

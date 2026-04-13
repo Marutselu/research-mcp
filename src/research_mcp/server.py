@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -51,8 +52,7 @@ def compute_disabled_groups(config: ResearchMCPConfig) -> set[str]:
         missing = [dep for dep in required_deps if not _check_optional_dep(dep)]
         if missing:
             logger.warning(
-                "Group '%s' disabled: missing dependencies %s. "
-                "Install with: pip install 'research-mcp[%s]'",
+                "Group '%s' disabled: missing dependencies %s. Install with: pip install 'research-mcp[%s]'",
                 group_name,
                 missing,
                 group_name if group_name != "vector_index" else "index",
@@ -88,13 +88,23 @@ def make_lifespan(config: ResearchMCPConfig, disabled_groups: set[str]):
 
             from research_mcp.services.forums import ForumSearchService
 
-            searxng_client = SearXNGClient(http_client, config.services.searxng_url)
-            scrapling_client = ScraplingClient(config.scraping)
+            # Create shared semaphores for rate limiting
+            searxng_semaphore = asyncio.Semaphore(config.search.max_concurrent)
+            scrapling_semaphore = asyncio.Semaphore(config.scraping.max_concurrent)
+
+            searxng_client = SearXNGClient(
+                http_client,
+                config.services.searxng_url,
+                semaphore=searxng_semaphore,
+                delay_seconds=config.search.delay_seconds,
+                jitter_range=config.search.jitter_range,
+            )
+            scrapling_client = ScraplingClient(config.scraping, semaphore=scrapling_semaphore)
             context["searxng_client"] = searxng_client
             context["scrapling_client"] = scrapling_client
             context["web_search_service"] = WebSearchService(searxng_client, config.domains)
             context["scraper_service"] = ScraperService(scrapling_client, config.scraping)
-            context["forum_service"] = ForumSearchService(http_client, config)
+            context["forum_service"] = ForumSearchService(http_client, config, searxng_client=searxng_client)
 
         if "academic" not in disabled:
             from research_mcp.services.academic_search import AcademicSearchService

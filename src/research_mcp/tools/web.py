@@ -19,7 +19,7 @@ def register_web_tools(mcp: FastMCP) -> None:
         query: str,
         categories: list[str] | None = None,
         time_range: str | None = None,
-        max_results: int = 10,
+        max_results: int = 5,
         bypass_cache: bool = False,
         ctx: Context = None,
     ) -> SearchResponse:
@@ -36,9 +36,18 @@ def register_web_tools(mcp: FastMCP) -> None:
         service: WebSearchService = ctx.lifespan_context["web_search_service"]
         config = ctx.lifespan_context["config"]
 
-        cache_key = cache.make_key("research_web_search", {
-            "query": query, "categories": categories, "time_range": time_range, "max_results": max_results,
-        })
+        # Cap max_results against config maximum
+        effective_max = min(max_results, config.search.max_results)
+
+        cache_key = cache.make_key(
+            "research_web_search",
+            {
+                "query": query,
+                "categories": categories,
+                "time_range": time_range,
+                "max_results": effective_max,
+            },
+        )
 
         if not bypass_cache:
             cached = cache.get(cache_key)
@@ -49,7 +58,7 @@ def register_web_tools(mcp: FastMCP) -> None:
             query=query,
             categories=categories or ["general"],
             time_range=time_range,
-            max_results=max_results,
+            max_results=effective_max,
         )
 
         cache.set(cache_key, result.model_dump(), ttl_seconds=config.cache.ttl.search_results, source="web_search")
@@ -86,9 +95,14 @@ def register_web_tools(mcp: FastMCP) -> None:
         if extract_main_content and not css_selector:
             effective_selector = "article, main, .post-content, .article-content, .entry-content, #content"
 
-        cache_key = cache.make_key("research_scrape_url", {
-            "url": url, "tier": tier, "css_selector": effective_selector,
-        })
+        cache_key = cache.make_key(
+            "research_scrape_url",
+            {
+                "url": url,
+                "tier": tier,
+                "css_selector": effective_selector,
+            },
+        )
 
         if not bypass_cache:
             cached = cache.get(cache_key)
@@ -136,9 +150,14 @@ def register_web_tools(mcp: FastMCP) -> None:
         config = ctx.lifespan_context["config"]
         forum_service = ctx.lifespan_context["forum_service"]
 
-        cache_key = cache.make_key("research_forum_search", {
-            "query": query, "site": site, "max_results": max_results,
-        })
+        cache_key = cache.make_key(
+            "research_forum_search",
+            {
+                "query": query,
+                "site": site,
+                "max_results": max_results,
+            },
+        )
 
         if not bypass_cache:
             cached = cache.get(cache_key)
@@ -146,7 +165,10 @@ def register_web_tools(mcp: FastMCP) -> None:
                 return SearchResponse(**cached)
 
         threads = await forum_service.search_forum(
-            query=query, site=site, max_results=max_results, include_content=False,
+            query=query,
+            site=site,
+            max_results=max_results,
+            include_content=False,
         )
 
         results = []
@@ -167,14 +189,16 @@ def register_web_tools(mcp: FastMCP) -> None:
             if "question_id" in thread:
                 metadata["question_id"] = thread["question_id"]
 
-            results.append(NormalizedResult(
-                title=thread.get("title", ""),
-                url=thread.get("url", ""),
-                snippet=thread.get("snippet", thread.get("question_body", ""))[:300],
-                source=thread.get("source", site),
-                content_type="forum_thread",
-                metadata=metadata,
-            ))
+            results.append(
+                NormalizedResult(
+                    title=thread.get("title", ""),
+                    url=thread.get("url", ""),
+                    snippet=thread.get("snippet", thread.get("question_body", ""))[:300],
+                    source=thread.get("source", site),
+                    content_type="forum_thread",
+                    metadata=metadata,
+                )
+            )
 
         response = SearchResponse(results=results, total=len(results), query=query)
         cache.set(cache_key, response.model_dump(), ttl_seconds=config.cache.ttl.search_results, source="forum_search")
@@ -208,9 +232,14 @@ def register_web_tools(mcp: FastMCP) -> None:
         config = ctx.lifespan_context["config"]
         forum_service = ctx.lifespan_context["forum_service"]
 
-        cache_key = cache.make_key("research_forum_thread", {
-            "url": url, "site": site, "question_id": question_id,
-        })
+        cache_key = cache.make_key(
+            "research_forum_thread",
+            {
+                "url": url,
+                "site": site,
+                "question_id": question_id,
+            },
+        )
 
         if not bypass_cache:
             cached = cache.get(cache_key)
@@ -218,7 +247,9 @@ def register_web_tools(mcp: FastMCP) -> None:
                 return _paginate(cached["content"], start_index, max_length)
 
         content = await forum_service.get_thread_content(
-            url=url, site=site, question_id=question_id,
+            url=url,
+            site=site,
+            question_id=question_id,
         )
 
         cache.set(cache_key, {"content": content}, ttl_seconds=config.cache.ttl.web_pages, source="forum_thread")
@@ -236,5 +267,3 @@ def _paginate(content: str, start_index: int, max_length: int) -> PaginatedConte
         is_truncated=start_index + len(chunk) < total,
         has_more=start_index + len(chunk) < total,
     )
-
-

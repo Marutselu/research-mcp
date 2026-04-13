@@ -33,12 +33,18 @@ class ScrapingConfig(BaseModel):
     auto_escalate: bool = True
     timeout_seconds: int = 30
     max_content_length: int = 50000
+    max_concurrent: int = 3
+
+
+class SearchConfig(BaseModel):
+    max_concurrent: int = 1
+    delay_seconds: float = 3.0
+    jitter_range: tuple[float, float] = (0.25, 1.5)
+    max_results: int = 5
 
 
 class AcademicConfig(BaseModel):
-    default_sources: list[str] = Field(
-        default=["semantic_scholar", "arxiv", "crossref", "openalex"]
-    )
+    default_sources: list[str] = Field(default=["semantic_scholar", "arxiv", "crossref", "openalex"])
     max_results_per_source: int = 10
 
 
@@ -74,7 +80,9 @@ class ResearchMCPConfig(BaseSettings):
     )
 
     @classmethod
-    def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
+    def settings_customise_sources(
+        cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings
+    ):
         # Env vars take priority over init kwargs (YAML values)
         return env_settings, init_settings, file_secret_settings
 
@@ -83,6 +91,7 @@ class ResearchMCPConfig(BaseSettings):
     transport: str = "http"
     host: str = "127.0.0.1"
     port: int = 8000
+    search: SearchConfig = SearchConfig()
     scraping: ScrapingConfig = ScrapingConfig()
     academic: AcademicConfig = AcademicConfig()
     cache: CacheConfig = CacheConfig()
@@ -115,7 +124,6 @@ def _resolve_config_path(cli_path: str | None = None) -> Path | None:
         if path.is_file():
             return path
     return None
-
 
 
 def load_config(config_path: str | None = None) -> ResearchMCPConfig:

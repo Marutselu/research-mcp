@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from dataclasses import dataclass
 
 from research_mcp.clients.http import APIError
@@ -21,14 +22,22 @@ class ScrapeResult:
 
 
 class ScraplingClient:
-    def __init__(self, config: ScrapingConfig) -> None:
+    def __init__(self, config: ScrapingConfig, semaphore: asyncio.Semaphore | None = None) -> None:
         self._config = config
+        self._semaphore = semaphore
 
     async def fetch(self, url: str, tier: str = "auto") -> ScrapeResult:
         """Fetch a URL using the specified scraping tier.
 
         tier='auto' will try basic first, then escalate on failure.
         """
+        if self._semaphore:
+            async with self._semaphore:
+                return await self._do_fetch(url, tier)
+        return await self._do_fetch(url, tier)
+
+    async def _do_fetch(self, url: str, tier: str = "auto") -> ScrapeResult:
+        """Internal fetch implementation."""
         if tier == "auto" and self._config.auto_escalate:
             return await self._fetch_with_escalation(url)
 
@@ -38,11 +47,12 @@ class ScraplingClient:
 
     async def _fetch_with_escalation(self, url: str) -> ScrapeResult:
         """Try basic first, escalate to dynamic, then stealth on failure."""
-        for tier_name, fetch_fn in [
+        tiers = [
             ("basic", self._fetch_basic),
             ("dynamic", self._fetch_dynamic),
             ("stealth", self._fetch_stealth),
-        ]:
+        ]
+        for i, (tier_name, fetch_fn) in enumerate(tiers):
             try:
                 result = await fetch_fn(url)
                 if result.html and len(result.html.strip()) > 100:
@@ -50,7 +60,10 @@ class ScraplingClient:
                 logger.info("Tier '%s' returned insufficient content for %s, escalating", tier_name, url)
             except Exception as e:
                 logger.info("Tier '%s' failed for %s: %s, escalating", tier_name, url, e)
-                continue
+
+            # Delay between escalation tiers (not before the first attempt)
+            if i < len(tiers) - 1:
+                await asyncio.sleep(random.uniform(1.0, 2.0))
 
         raise APIError(f"All scraping tiers failed for {url}", source="scrapling")
 
